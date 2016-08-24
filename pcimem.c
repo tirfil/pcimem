@@ -35,6 +35,81 @@
 #include <sys/types.h>
 #include <sys/mman.h>
 
+#include <dirent.h>
+#include <fcntl.h>
+
+int
+getid (char *path, char *name, char *result)
+{
+  int fid;
+  char object[256];
+  char buffer[256];
+  strcpy (object, path);
+  strcat (object, "/");
+  strcat (object, name);
+  fid = open (object, O_RDONLY);
+  if (fid != 0)
+    {
+      if (read (fid, buffer, 256) > 0)
+	{
+	  //printf("%s: %s\n",name,buffer);
+	  strncpy (result, buffer + 2, 4);
+	  //printf("%s: %s\n",name,result);
+	}
+    }
+  close (fid);
+  return 0;
+}
+
+int
+getpcipath (char *vd, char *path)
+{
+  char *vendorid;
+  char *deviceid;
+  char *pch;
+  DIR *dp;
+  struct dirent *ep;
+  char device[256];
+  char ret[256];
+
+  pch = strtok (vd, ":");
+  if (pch != NULL)
+    vendorid = pch;
+  pch = strtok (NULL, ":");
+  if (pch != NULL)
+    deviceid = pch;
+  //printf ("vendor:%s device:%s\n",vendorid,deviceid);
+  strcpy (path, "/sys/bus/pci/devices/");
+
+  dp = opendir (path);
+  if (dp != NULL)
+    {
+      while (ep = readdir (dp))
+	{
+	  strcpy (device, path);
+	  strcat (device, ep->d_name);
+	  //printf("%s\n",device);
+	  {
+	    getid (device, "vendor", ret);
+	    if (strncmp (ret, vendorid, 4) == 0)
+	      {
+		getid (device, "device", ret);
+		if (strncmp (ret, deviceid, 4) == 0)
+		  {
+		    //printf ("detect %s\n", device);
+		    strcpy (path, device);
+		  }
+	      }
+	  }
+	}
+      (void) closedir (dp);
+    }
+  else
+    perror ("Couldn't open the directory");
+
+  return 0;
+}
+
 #define PRINT_ERROR \
 	do { \
 		fprintf(stderr, "Error at line %d, file %s (%d) [%s]\n", \
@@ -44,82 +119,148 @@
 #define MAP_SIZE 4096UL
 #define MAP_MASK (MAP_SIZE - 1)
 
-int main(int argc, char **argv) {
-	int fd;
-	void *map_base, *virt_addr;
-	uint32_t read_result, writeval;
-	char *filename;
-	off_t target;
-	int access_type = 'w';
+int
+main (int argc, char **argv)
+{
+  int fd;
+  void *map_base, *virt_addr;
+  uint32_t read_result, writeval;
+  char filename[256];
+  off_t target;
+  int access_type = 'w';
+  char path[256];
+  int mode;
+  char *writearg = NULL;
 
-	if(argc < 3) {
-		// pcimem /sys/bus/pci/devices/0001\:00\:07.0/resource0 0x100 w 0x00
-		// argv[0]  [1]                                         [2]   [3] [4]
-		fprintf(stderr, "\nUsage:\t%s { sys file } { offset } [ type [ data ] ]\n"
-			"\tsys file: sysfs file for the pci resource to act on\n"
-			"\toffset  : offset into pci memory region to act upon\n"
-			"\ttype    : access operation type : [b]yte, [h]alfword, [w]ord\n"
-			"\tdata    : data to be written\n\n",
-			argv[0]);
-		exit(1);
+  // detect mode
+  if (argc > 1)
+    {
+      if (argv[1][0] == '/')
+	mode = 0;		// use sysfs (original)
+      else
+	mode = 1;		// use vendorid:deviceid
+
+
+    }
+
+  if (mode == 0 && argc < 3)
+    {
+      // pcimem /sys/bus/pci/devices/0001\:00\:07.0/resource0 0x100 w 0x00
+      // argv[0]  [1]                                         [2]   [3] [4]
+      fprintf (stderr,
+	       "\nUsage:\t%s { sys file } { offset } [ type [ data ] ]\n"
+	       "\tsys file: sysfs file for the pci resource to act on\n"
+	       "\toffset  : offset into pci memory region to act upon\n"
+	       "\ttype    : access operation type : [b]yte, [h]alfword, [w]ord\n"
+	       "\tdata    : data to be written\n\n", argv[0]);
+      exit (1);
+    }
+
+  if (mode == 1 && argc < 4)
+    {
+      fprintf (stderr,
+	       "\nUsage:\t%s { sys file } { bar } { offset } [ type [ data ] ]\n"
+	       "\t<vendor>:<device> : vendorid and deviceid\n"
+	       "\tbar		  : bar number\n"
+	       "\toffset            : offset into pci memory region to act upon\n"
+	       "\ttype              : access operation type : [b]yte, [h]alfword, [w]ord\n"
+	       "\tdata              : data to be written\n\n", argv[0]);
+      exit (1);
+    }
+
+
+  if (mode == 0)
+    {
+      strcpy (filename, argv[1]);
+      target = strtoul (argv[2], 0, 0);
+      if (argc > 3)
+	access_type = tolower (argv[3][0]);
+      if (argc > 4)
+	writearg = argv[4];
+
+    }
+  else
+    {
+      if (getpcipath (argv[1], path) != 0)
+	{
+	  PRINT_ERROR;
+	  exit (1);
 	}
-	filename = argv[1];
-	target = strtoul(argv[2], 0, 0);
+      // arguments mapping changes !
+      strcpy (filename, path);
+      strcat (filename, "/resource");
+      strcat (filename, argv[2]);
+      printf ("sysfs is %s\n", filename);
+      target = strtoul (argv[3], 0, 0);
+      if (argc > 4)
+	access_type = tolower (argv[4][0]);
+      if (argc > 5)
+	writearg = argv[5];
+    }
 
-	if(argc > 3)
-		access_type = tolower(argv[3][0]);
+  if ((fd = open (filename, O_RDWR | O_SYNC)) == -1)
+    PRINT_ERROR;
+  printf ("%s opened.\n", filename);
+  printf ("Target offset is 0x%x, page size is %ld\n", (int) target,
+	  sysconf (_SC_PAGE_SIZE));
+  fflush (stdout);
 
-    if((fd = open(filename, O_RDWR | O_SYNC)) == -1) PRINT_ERROR;
-    printf("%s opened.\n", filename);
-    printf("Target offset is 0x%x, page size is %ld\n", (int) target, sysconf(_SC_PAGE_SIZE));
-    fflush(stdout);
+  /* Map one page */
+  printf ("mmap(%d, %ld, 0x%x, 0x%x, %d, 0x%x)\n", 0, MAP_SIZE,
+	  PROT_READ | PROT_WRITE, MAP_SHARED, fd, (int) target);
+  map_base =
+    mmap (0, MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
+	  target & ~MAP_MASK);
+  if (map_base == (void *) -1)
+    PRINT_ERROR;
+  printf ("PCI Memory mapped to address 0x%08lx.\n",
+	  (unsigned long) map_base);
+  fflush (stdout);
 
-    /* Map one page */
-    printf("mmap(%d, %ld, 0x%x, 0x%x, %d, 0x%x)\n", 0, MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, (int) target);
-    map_base = mmap(0, MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, target & ~MAP_MASK);
-    if(map_base == (void *) -1) PRINT_ERROR;
-    printf("PCI Memory mapped to address 0x%08lx.\n", (unsigned long) map_base);
-    fflush(stdout);
+  virt_addr = map_base + (target & MAP_MASK);
+  switch (access_type)
+    {
+    case 'b':
+      read_result = *((uint8_t *) virt_addr);
+      break;
+    case 'h':
+      read_result = *((uint16_t *) virt_addr);
+      break;
+    case 'w':
+      read_result = *((uint32_t *) virt_addr);
+      break;
+    default:
+      fprintf (stderr, "Illegal data type '%c'.\n", access_type);
+      exit (2);
+    }
+  printf ("Value at offset 0x%X (%p): 0x%X\n", (int) target, virt_addr,
+	  read_result);
+  fflush (stdout);
 
-    virt_addr = map_base + (target & MAP_MASK);
-    switch(access_type) {
-		case 'b':
-			read_result = *((uint8_t *) virt_addr);
-			break;
-		case 'h':
-			read_result = *((uint16_t *) virt_addr);
-			break;
-		case 'w':
-			read_result = *((uint32_t *) virt_addr);
-			break;
-		default:
-			fprintf(stderr, "Illegal data type '%c'.\n", access_type);
-			exit(2);
+  if (writearg)
+    {
+      writeval = strtoul (writearg, 0, 0);
+      switch (access_type)
+	{
+	case 'b':
+	  *((uint8_t *) virt_addr) = writeval;
+	  read_result = *((uint8_t *) virt_addr);
+	  break;
+	case 'h':
+	  *((uint16_t *) virt_addr) = writeval;
+	  read_result = *((uint16_t *) virt_addr);
+	  break;
+	case 'w':
+	  *((uint32_t *) virt_addr) = writeval;
+	  read_result = *((uint32_t *) virt_addr);
+	  break;
 	}
-    printf("Value at offset 0x%X (%p): 0x%X\n", (int) target, virt_addr, read_result);
-    fflush(stdout);
+      printf ("Written 0x%X; readback 0x%X\n", writeval, read_result);
+      fflush (stdout);
+    }
 
-	if(argc > 4) {
-		writeval = strtoul(argv[4], 0, 0);
-		switch(access_type) {
-			case 'b':
-				*((uint8_t *) virt_addr) = writeval;
-				read_result = *((uint8_t *) virt_addr);
-				break;
-			case 'h':
-				*((uint16_t *) virt_addr) = writeval;
-				read_result = *((uint16_t *) virt_addr);
-				break;
-			case 'w':
-				*((uint32_t *) virt_addr) = writeval;
-				read_result = *((uint32_t *) virt_addr);
-				break;
-		}
-		printf("Written 0x%X; readback 0x%X\n", writeval, read_result);
-		fflush(stdout);
-	}
-
-	if(munmap(map_base, MAP_SIZE) == -1) PRINT_ERROR;
-    close(fd);
-    return 0;
+  if (munmap (map_base, MAP_SIZE) == -1)
+    PRINT_ERROR;
+  close (fd);
+  return 0;
 }
