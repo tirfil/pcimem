@@ -1,3 +1,21 @@
+== modification by tirfil ==
+
+Add alternative to detect PCI slot using vendor/device id and bar number instead of using sysfs path.
+
+New Usage is:
+        ./pcimem { <vendor>:<device> } { bar } { offset } [ type [ data ] ]
+               <vendor>:<device>  : vendorid and deviceid
+               bar               : bar number
+               offset            : offset into pci memory region to act upon
+               type              : access operation type : [b]yte, [h]alfword, [w]ord
+               data              : data to be written
+               
+example:
+./pcimem 1172:e001 0 0x0400000 w 0
+
+Former usage works always (when the first argument starts with "/"). 
+Using former usage is required when several slots uses PCI cards with the same vendor/device id to select correct card.
+
 == Overview ==
 
 The pcimem application provides a simple method of reading and writing
