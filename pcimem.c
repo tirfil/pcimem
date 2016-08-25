@@ -71,7 +71,11 @@ getpcipath (char *vd, char *path)
   struct dirent *ep;
   char device[256];
   char ret[256];
+  int rc;
 
+  rc = -1;
+
+  for (char* p=vd ; *p; ++p) *p = tolower(*p);
   pch = strtok (vd, ":");
   if (pch != NULL)
     vendorid = pch;
@@ -98,6 +102,7 @@ getpcipath (char *vd, char *path)
 		  {
 		    //printf ("detect %s\n", device);
 		    strcpy (path, device);
+		    rc = 0;
 		  }
 	      }
 	  }
@@ -107,7 +112,7 @@ getpcipath (char *vd, char *path)
   else
     perror ("Couldn't open the directory");
 
-  return 0;
+  return rc;
 }
 
 #define PRINT_ERROR \
@@ -159,7 +164,7 @@ main (int argc, char **argv)
   if (mode == 1 && argc < 4)
     {
       fprintf (stderr,
-	       "\nUsage:\t%s { <vendor>:<device> } { bar } { offset } [ type [ data ] ]\n"
+	       "\nUsage:\t%s { sys file } { bar } { offset } [ type [ data ] ]\n"
 	       "\t<vendor>:<device> : vendorid and deviceid\n"
 	       "\tbar		  : bar number\n"
 	       "\toffset            : offset into pci memory region to act upon\n"
