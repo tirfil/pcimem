@@ -164,7 +164,7 @@ main (int argc, char **argv)
   if (mode == 1 && argc < 4)
     {
       fprintf (stderr,
-	       "\nUsage:\t%s { sys file } { bar } { offset } [ type [ data ] ]\n"
+	       "\nUsage:\t%s { <vendor>:<device> } { bar } { offset } [ type [ data ] ]\n"
 	       "\t<vendor>:<device> : vendorid and deviceid\n"
 	       "\tbar		  : bar number\n"
 	       "\toffset            : offset into pci memory region to act upon\n"
